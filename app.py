@@ -1,662 +1,524 @@
+from datetime import datetime
 import sqlite3
-from datetime import datetime, timedelta
-import customtkinter as ctk
-from tkinter import messagebox, ttk
-from PIL import Image
-import os
-
-# Configurações de fonte e visual
-FONTE_PADRAO = ("Arial", 14)
-FONTE_TITULO = ("Arial", 18, "bold")
-FONTE_BOTAO = ("Arial", 14, "bold")
-
-ARQUIVO_LOGO = "logo.png"
-
-ctk.set_appearance_mode("System")
-ctk.set_default_color_theme("blue")
+import flet as ft
 
 # --- BANCO DE DADOS ---
-class Database:
-    def __init__(self, db_name="gestor_comercial.db"):
-        self.conn = sqlite3.connect(db_name)
-        self.cursor = self.conn.cursor()
-        self.criar_tabelas()
+def get_db():
+    conn = sqlite3.connect("gestor_comercial.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-    def criar_tabelas(self):
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS usuarios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                senha TEXT NOT NULL
-            )
-        """)
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS produtos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario_id INTEGER,
-                nome TEXT NOT NULL,
-                quantidade INTEGER NOT NULL,
-                preco_custo REAL NOT NULL,
-                preco_venda REAL NOT NULL,
-                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-            )
-        """)
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS vendas (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario_id INTEGER,
-                produto_id INTEGER,
-                quantidade_vendida INTEGER,
-                preco_custo_total REAL,
-                preco_venda_total REAL,
-                lucro REAL,
-                data TEXT,
-                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-            )
-        """)
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS gastos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario_id INTEGER,
-                categoria TEXT,
-                descricao TEXT,
-                valor REAL,
-                data TEXT,
-                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-            )
-        """)
-        self.conn.commit()
+def criar_tabelas():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            senha TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS produtos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER,
+            nome TEXT NOT NULL,
+            quantidade INTEGER NOT NULL,
+            preco_custo REAL NOT NULL,
+            preco_venda REAL NOT NULL,
+            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS vendas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER,
+            produto_id INTEGER,
+            quantidade_vendida INTEGER,
+            preco_custo_total REAL,
+            preco_venda_total REAL,
+            lucro REAL,
+            data TEXT,
+            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gastos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER,
+            categoria TEXT,
+            descricao TEXT,
+            valor REAL,
+            data TEXT,
+            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-    def registrar_usuario(self, username, senha):
-        try:
-            self.cursor.execute("INSERT INTO usuarios (username, senha) VALUES (?, ?)", (username, senha))
-            self.conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
+criar_tabelas()
 
-    def verificar_login(self, username, senha):
-        self.cursor.execute("SELECT id FROM usuarios WHERE username = ? AND senha = ?", (username, senha))
-        return self.cursor.fetchone()
+def main(page: ft.Page):
+    page.title = "Gestor Comercial"
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+    page.theme_mode = ft.ThemeMode.LIGHT
+    page.window_width = 1100
+    page.window_height = 750
 
-db = Database()
+    user_session = {"id": None, "username": ""}
 
-# --- APLICAÇÃO PRINCIPAL ---
-class GestorComercialApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-        self.title("Gestor Comercial - Pequenos Comércios")
-        self.geometry("1100x780")
-        self.usuario_atual = None
-        self.usuario_id = None
+    def mostrar_alerta(mensagem, cor=ft.Colors.RED):
+        snack = ft.SnackBar(ft.Text(mensagem, color=ft.Colors.WHITE), bgcolor=cor)
+        page.overlay.append(snack)
+        snack.open = True
+        page.update()
 
-        self.imagem_logo_login = None
-        self.imagem_logo_topo = None
-        if os.path.exists(ARQUIVO_LOGO):
-            img_pil = Image.open(ARQUIVO_LOGO)
-            self.imagem_logo_login = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(160, 90))
-            self.imagem_logo_topo = ctk.CTkImage(light_image=img_pil, dark_image=img_pil, size=(120, 60))
+    def carregar_dashboard():
+        page.clean()
 
-        self.tela_login()
+        # --- ABA ESTOQUE ---
+        txt_prod_nome = ft.TextField(label="Nome do Produto", width=250)
+        txt_prod_qtd = ft.TextField(label="Qtd Inicial", width=250, keyboard_type=ft.KeyboardType.NUMBER)
+        txt_prod_custo = ft.TextField(label="Preço Custo (R$)", width=250)
+        txt_prod_venda = ft.TextField(label="Preço Venda (R$)", width=250)
+        tabela_produtos = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("ID")),
+                ft.DataColumn(ft.Text("Produto")),
+                ft.DataColumn(ft.Text("Qtd")),
+                ft.DataColumn(ft.Text("Custo")),
+                ft.DataColumn(ft.Text("Venda")),
+                ft.DataColumn(ft.Text("Ação")),
+            ],
+            rows=[]
+        )
 
-    def limpar_tela(self):
-        for widget in self.winfo_children():
-            widget.destroy()
+        def atualizar_estoque():
+            tabela_produtos.rows.clear()
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM produtos WHERE usuario_id = ?", (user_session["id"],))
+            produtos = cursor.fetchall()
+            conn.close()
 
-    # Função auxiliar para preencher linhas vazias até embaixo na tabela
-    def preencher_linhas_vazias(self, tree, num_linhas_desejadas=14):
-        itens_atuais = len(tree.get_children())
-        faltam = num_linhas_desejadas - itens_atuais
-        for _ in range(max(0, faltam)):
-            tree.insert("", "end", values=("", "", "", "", "", "", ""))
+            for p in produtos:
+                def excluir_p(e, pid=p["id"]):
+                    conn = get_db()
+                    conn.cursor().execute("DELETE FROM produtos WHERE id = ? AND usuario_id = ?", (pid, user_session["id"]))
+                    conn.commit()
+                    conn.close()
+                    atualizar_estoque()
+                    atualizar_vendas()
 
-    # ================= TELA DE LOGIN =================
-    def tela_login(self):
-        self.limpar_tela()
+                tabela_produtos.rows.append(
+                    ft.DataRow(cells=[
+                        ft.DataCell(ft.Text(str(p["id"]))),
+                        ft.DataCell(ft.Text(p["nome"])),
+                        ft.DataCell(ft.Text(str(p["quantidade"]))),
+                        ft.DataCell(ft.Text(f"R$ {p['preco_custo']:.2f}")),
+                        ft.DataCell(ft.Text(f"R$ {p['preco_venda']:.2f}")),
+                        ft.DataCell(ft.IconButton(icon=ft.Icons.DELETE, icon_color=ft.Colors.RED, on_click=excluir_p, tooltip="Excluir Produto")),
+                    ])
+                )
+            page.update()
 
-        frame = ctk.CTkFrame(self, width=450, height=580, corner_radius=15)
-        frame.place(relx=0.5, rely=0.5, anchor="center")
+        def salvar_produto(e):
+            try:
+                nome = txt_prod_nome.value
+                qtd = int(txt_prod_qtd.value)
+                custo = float(txt_prod_custo.value.replace(",", "."))
+                venda = float(txt_prod_venda.value.replace(",", "."))
 
-        if self.imagem_logo_login:
-            lbl_logo_img = ctk.CTkLabel(frame, image=self.imagem_logo_login, text="")
-            lbl_logo_img.pack(pady=(20, 5))
+                conn = get_db()
+                conn.cursor().execute("INSERT INTO produtos (usuario_id, nome, quantidade, preco_custo, preco_venda) VALUES (?, ?, ?, ?, ?)",
+                                      (user_session["id"], nome, qtd, custo, venda))
+                conn.commit()
+                conn.close()
 
-        lbl_logo = ctk.CTkLabel(frame, text="🛒 GESTOR COMERCIAL", font=FONTE_TITULO)
-        lbl_logo.pack(pady=10)
+                txt_prod_nome.value = ""
+                txt_prod_qtd.value = ""
+                txt_prod_custo.value = ""
+                txt_prod_venda.value = ""
+                atualizar_estoque()
+                atualizar_vendas()
+                mostrar_alerta("Produto salvo com sucesso!", ft.Colors.GREEN)
+            except ValueError:
+                mostrar_alerta("Verifique se os campos numéricos estão corretos.")
 
-        self.entry_user = ctk.CTkEntry(frame, placeholder_text="Usuário", font=FONTE_PADRAO, width=320, height=45)
-        self.entry_user.pack(pady=10)
+        tab_estoque_content = ft.Container(
+            ft.Row([
+                ft.Column([
+                    ft.Text("Cadastrar Produto", weight=ft.FontWeight.BOLD),
+                    txt_prod_nome, txt_prod_qtd, txt_prod_custo, txt_prod_venda,
+                    ft.Button("Salvar Produto", on_click=salvar_produto, bgcolor=ft.Colors.GREEN, color=ft.Colors.WHITE)
+                ], width=300),
+                ft.VerticalDivider(),
+                ft.Column([ft.Text("Lista de Produtos", weight=ft.FontWeight.BOLD), ft.Row([tabela_produtos], scroll=ft.ScrollMode.AUTO)], expand=True)
+            ], expand=True),
+            padding=20
+        )
 
-        self.entry_senha = ctk.CTkEntry(frame, placeholder_text="Senha", show="*", font=FONTE_PADRAO, width=320, height=45)
-        self.entry_senha.pack(pady=10)
+        # --- ABA VENDAS ---
+        dd_produtos = ft.Dropdown(label="Selecione o Produto", width=250)
+        txt_venda_qtd = ft.TextField(label="Quantidade Vendida", width=250, keyboard_type=ft.KeyboardType.NUMBER)
+        tabela_vendas = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("ID")),
+                ft.DataColumn(ft.Text("Produto")),
+                ft.DataColumn(ft.Text("Qtd")),
+                ft.DataColumn(ft.Text("Total Venda")),
+                ft.DataColumn(ft.Text("Lucro")),
+                ft.DataColumn(ft.Text("Ação")),
+            ],
+            rows=[]
+        )
 
-        btn_entrar = ctk.CTkButton(frame, text="Entrar", font=FONTE_BOTAO, fg_color="#2ecc71", hover_color="#27ae60", width=320, height=45, command=self.fazer_login)
-        btn_entrar.pack(pady=15)
+        def atualizar_vendas():
+            dd_produtos.options.clear()
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM produtos WHERE usuario_id = ? AND quantidade > 0", (user_session["id"],))
+            for p in cursor.fetchall():
+                dd_produtos.options.append(ft.dropdown.Option(key=str(p["id"]), text=f"{p['nome']} (Estoque: {p['quantidade']})"))
 
-        btn_cadastrar = ctk.CTkButton(frame, text="Criar Nova Conta (Multi-usuário)", font=FONTE_BOTAO, fg_color="#3498db", hover_color="#2980b9", width=320, height=45, command=self.cadastrar_usuario)
-        btn_cadastrar.pack(pady=5)
+            tabela_vendas.rows.clear()
+            cursor.execute("""
+                SELECT v.*, p.nome as nome_produto FROM vendas v 
+                JOIN produtos p ON v.produto_id = p.id WHERE v.usuario_id = ?
+            """, (user_session["id"],))
+            vendas = cursor.fetchall()
+            conn.close()
 
-    def fazer_login(self):
-        user = self.entry_user.get()
-        senha = self.entry_senha.get()
-        res = db.verificar_login(user, senha)
-        if res:
-            self.usuario_atual = user
-            self.usuario_id = res[0]
-            self.tela_principal()
-        else:
-            messagebox.showerror("Erro", "Usuário ou senha incorretos!")
+            for v in vendas:
+                def excluir_v(e, vid=v["id"]):
+                    conn = get_db()
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT produto_id, quantidade_vendida FROM vendas WHERE id = ? AND usuario_id = ?", (vid, user_session["id"]))
+                    vend = cursor.fetchone()
+                    if vend:
+                        cursor.execute("UPDATE produtos SET quantidade = quantidade + ? WHERE id = ?", (vend["quantidade_vendida"], vend["produto_id"]))
+                        cursor.execute("DELETE FROM vendas WHERE id = ?", (vid,))
+                        conn.commit()
+                    conn.close()
+                    atualizar_estoque()
+                    atualizar_vendas()
+                    atualizar_relatorio()
 
-    def cadastrar_usuario(self):
-        user = self.entry_user.get()
-        senha = self.entry_senha.get()
-        if not user or not senha:
-            messagebox.showwarning("Aviso", "Preencha usuário e senha para cadastrar.")
-            return
-        if db.registrar_usuario(user, senha):
-            messagebox.showinfo("Sucesso", "Usuário cadastrado com sucesso! Faça o login.")
-        else:
-            messagebox.showerror("Erro", "Nome de usuário já existe.")
+                tabela_vendas.rows.append(
+                    ft.DataRow(cells=[
+                        ft.DataCell(ft.Text(str(v["id"]))),
+                        ft.DataCell(ft.Text(v["nome_produto"])),
+                        ft.DataCell(ft.Text(str(v["quantidade_vendida"]))),
+                        ft.DataCell(ft.Text(f"R$ {v['preco_venda_total']:.2f}")),
+                        ft.DataCell(ft.Text(f"R$ {v['lucro']:.2f}")),
+                        ft.DataCell(ft.IconButton(icon=ft.Icons.DELETE, icon_color=ft.Colors.RED, on_click=excluir_v, tooltip="Excluir Venda")),
+                    ])
+                )
+            page.update()
 
-    # ================= TELA PRINCIPAL =================
-    def tela_principal(self):
-        self.limpar_tela()
-
-        top_bar = ctk.CTkFrame(self, height=75, corner_radius=0, fg_color=("#e0e0e0", "#2b2b2b"))
-        top_bar.pack(side="top", fill="x")
-
-        if self.imagem_logo_topo:
-            lbl_logo_top = ctk.CTkLabel(top_bar, image=self.imagem_logo_topo, text="")
-            lbl_logo_top.pack(side="left", padx=15, pady=5)
-
-        lbl_bemvindo = ctk.CTkLabel(top_bar, text=f"👤 Operador: {self.usuario_atual}", font=FONTE_PADRAO)
-        lbl_bemvindo.pack(side="left", padx=15)
-
-        btn_tema = ctk.CTkButton(top_bar, text="🌓 Alternar Tema", font=FONTE_PADRAO, width=140, command=self.alternar_modo)
-        btn_tema.pack(side="right", padx=20)
-
-        btn_sair = ctk.CTkButton(top_bar, text="Sair", font=FONTE_PADRAO, fg_color="#e74c3c", hover_color="#c0392b", width=100, command=self.tela_login)
-        btn_sair.pack(side="right")
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        
-        style.configure("Treeview", 
-                        font=("Arial", 13), 
-                        rowheight=42, 
-                        background="#ffffff", 
-                        foreground="#000000", 
-                        fieldbackground="#ffffff",
-                        borderwidth=1,
-                        relief="solid")
-        
-        style.configure("Treeview.Heading", 
-                        font=("Arial", 14, "bold"), 
-                        background="#d0d0d0", 
-                        foreground="#000000",
-                        relief="solid")
-        
-        style.layout("Treeview", [('Treeview.treearea', {'sticky': 'nswe'})])
-
-        self.tabview = ctk.CTkTabview(self)
-        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.tab_estoque = self.tabview.add("📦 Estoque & Entrada")
-        self.tab_vendas = self.tabview.add("💰 Vendas")
-        self.tab_gastos = self.tabview.add("💸 Gastos & Despesas")
-        self.tab_relatorio = self.tabview.add("📊 Relatório Financeiro")
-
-        self.construir_aba_estoque()
-        self.construir_aba_vendas()
-        self.construir_aba_gastos()
-        self.construir_aba_relatorio()
-
-    def alternar_modo(self):
-        if ctk.get_appearance_mode() == "Dark":
-            ctk.set_appearance_mode("Light")
-        else:
-            ctk.set_appearance_mode("Dark")
-
-    # --- ABA 1: ESTOQUE E ENTRADA DE PRODUTOS ---
-    def construir_aba_estoque(self):
-        frame_esq = ctk.CTkFrame(self.tab_estoque, width=320)
-        frame_esq.pack(side="left", fill="y", padx=10, pady=10)
-
-        ctk.CTkLabel(frame_esq, text="Cadastrar / Entrada Produto", font=FONTE_TITULO).pack(pady=15)
-
-        self.ent_nome_prod = ctk.CTkEntry(frame_esq, placeholder_text="Nome do Produto", font=FONTE_PADRAO, height=40)
-        self.ent_nome_prod.pack(pady=8, padx=15, fill="x")
-
-        self.ent_qtd_prod = ctk.CTkEntry(frame_esq, placeholder_text="Quantidade Inicial", font=FONTE_PADRAO, height=40)
-        self.ent_qtd_prod.pack(pady=8, padx=15, fill="x")
-
-        self.ent_custo_prod = ctk.CTkEntry(frame_esq, placeholder_text="Preço de Custo (R$)", font=FONTE_PADRAO, height=40)
-        self.ent_custo_prod.pack(pady=8, padx=15, fill="x")
-
-        self.ent_venda_prod = ctk.CTkEntry(frame_esq, placeholder_text="Preço de Venda (R$)", font=FONTE_PADRAO, height=40)
-        self.ent_venda_prod.pack(pady=8, padx=15, fill="x")
-
-        btn_salvar_prod = ctk.CTkButton(frame_esq, text="Salvar no Estoque", font=FONTE_BOTAO, fg_color="#27ae60", height=45, command=self.salvar_produto)
-        btn_salvar_prod.pack(pady=15, padx=15, fill="x")
-
-        btn_excluir_prod = ctk.CTkButton(frame_esq, text="Excluir Produto Selecionado", font=FONTE_BOTAO, fg_color="#c0392b", hover_color="#a93226", height=45, command=self.excluir_produto)
-        btn_excluir_prod.pack(pady=5, padx=15, fill="x")
-
-        frame_tabela = ctk.CTkFrame(self.tab_estoque)
-        frame_tabela.pack(side="right", fill="both", expand=True, padx=10, pady=10)
-
-        self.tree_estoque = ttk.Treeview(frame_tabela, columns=("ID", "Nome", "Qtd", "Custo", "Venda"), show="headings")
-        
-        self.tree_estoque.heading("ID", text="ID")
-        self.tree_estoque.heading("Nome", text="Produto")
-        self.tree_estoque.heading("Qtd", text="Qtd")
-        self.tree_estoque.heading("Custo", text="Custo (R$)")
-        self.tree_estoque.heading("Venda", text="Venda (R$)")
-
-        self.tree_estoque.column("ID", width=70, anchor="center")
-        self.tree_estoque.column("Nome", width=250, anchor="w")
-        self.tree_estoque.column("Qtd", width=100, anchor="center")
-        self.tree_estoque.column("Custo", width=130, anchor="e")
-        self.tree_estoque.column("Venda", width=130, anchor="e")
-
-        scrollbar_estoque = ttk.Scrollbar(frame_tabela, orient="vertical", command=self.tree_estoque.yview)
-        self.tree_estoque.configure(yscrollcommand=scrollbar_estoque.set)
-
-        self.tree_estoque.pack(side="left", fill="both", expand=True)
-        scrollbar_estoque.pack(side="right", fill="y")
-
-        self.atualizar_tabela_estoque()
-
-    def salvar_produto(self):
-        try:
-            nome = self.ent_nome_prod.get()
-            qtd = int(self.ent_qtd_prod.get())
-            custo = float(self.ent_custo_prod.get().replace(",", "."))
-            venda = float(self.ent_venda_prod.get().replace(",", "."))
-
-            if not nome:
-                raise ValueError("Nome inválido")
-
-            db.cursor.execute(
-                "INSERT INTO produtos (usuario_id, nome, quantidade, preco_custo, preco_venda) VALUES (?, ?, ?, ?, ?)",
-                (self.usuario_id, nome, qtd, custo, venda)
-            )
-            db.conn.commit()
-            messagebox.showinfo("Sucesso", "Produto cadastrado com sucesso!")
-            self.atualizar_tabela_estoque()
-            self.atualizar_combobox_vendas()
-        except ValueError:
-            messagebox.showerror("Erro", "Verifique se os campos numéricos e de texto foram preenchidos corretamente.")
-
-    def excluir_produto(self):
-        try:
-            selecionado = self.tree_estoque.selection()
-            if not selecionado:
-                messagebox.showwarning("Aviso", "Selecione um produto na tabela para excluir.")
+        def realizar_venda(e):
+            if not dd_produtos.value or not txt_venda_qtd.value:
+                mostrar_alerta("Selecione o produto e a quantidade.")
                 return
-            
-            item = self.tree_estoque.item(selecionado)
-            prod_id = item['values'][0]
+            try:
+                prod_id = int(dd_produtos.value)
+                qtd_v = int(txt_venda_qtd.value)
 
-            if not prod_id or prod_id == "":
-                return
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute("SELECT quantidade, preco_custo, preco_venda FROM produtos WHERE id = ? AND usuario_id = ?", (prod_id, user_session["id"]))
+                p = cursor.fetchone()
 
-            db.cursor.execute("SELECT COUNT(*) FROM vendas WHERE produto_id = ?", (prod_id,))
-            qtd_vendas = db.cursor.fetchone()[0]
-
-            if qtd_vendas > 0:
-                if not messagebox.askyesno("Atenção", "Existem vendas registradas para este produto. Deseja realmente excluí-lo e apagar o histórico associado?"):
+                if not p or p["quantidade"] < qtd_v:
+                    mostrar_alerta("Estoque insuficiente!")
+                    conn.close()
                     return
-                db.cursor.execute("DELETE FROM vendas WHERE produto_id = ?", (prod_id,))
 
-            db.cursor.execute("DELETE FROM produtos WHERE id = ?", (prod_id,))
-            db.conn.commit()
+                custo_total = p["preco_custo"] * qtd_v
+                venda_total = p["preco_venda"] * qtd_v
+                lucro = venda_total - custo_total
+                data_atual = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-            messagebox.showinfo("Sucesso", "Produto excluído do estoque com sucesso.")
-            self.atualizar_tabela_estoque()
-            self.atualizar_combobox_vendas()
-            self.atualizar_tabela_vendas()
-        except Exception as e:
-            messagebox.showerror("Erro", f"Não foi possível excluir o produto: {e}")
+                cursor.execute("INSERT INTO vendas (usuario_id, produto_id, quantidade_vendida, preco_custo_total, preco_venda_total, lucro, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               (user_session["id"], prod_id, qtd_v, custo_total, venda_total, lucro, data_atual))
+                cursor.execute("UPDATE produtos SET quantidade = quantidade - ? WHERE id = ?", (qtd_v, prod_id))
+                conn.commit()
+                conn.close()
 
-    def atualizar_tabela_estoque(self):
-        for row in self.tree_estoque.get_children():
-            self.tree_estoque.delete(row)
-        db.cursor.execute("SELECT id, nome, quantidade, preco_custo, preco_venda FROM produtos WHERE usuario_id = ?", (self.usuario_id,))
-        for row in db.cursor.fetchall():
-            row_fmt = list(row)
-            row_fmt[3] = f"R$ {row_fmt[3]:.2f}"
-            row_fmt[4] = f"R$ {row_fmt[4]:.2f}"
-            self.tree_estoque.insert("", "end", values=row_fmt)
+                txt_venda_qtd.value = ""
+                dd_produtos.value = None
+                atualizar_estoque()
+                atualizar_vendas()
+                atualizar_relatorio()
+                mostrar_alerta("Venda realizada com sucesso!", ft.Colors.GREEN)
+            except Exception as ex:
+                mostrar_alerta(f"Erro: {ex}")
+
+        tab_vendas_content = ft.Container(
+            ft.Row([
+                ft.Column([
+                    ft.Text("Realizar Venda", weight=ft.FontWeight.BOLD),
+                    dd_produtos, txt_venda_qtd,
+                    ft.Button("Concluir Venda", on_click=realizar_venda, bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE)
+                ], width=300),
+                ft.VerticalDivider(),
+                ft.Column([ft.Text("Histórico de Vendas", weight=ft.FontWeight.BOLD), ft.Row([tabela_vendas], scroll=ft.ScrollMode.AUTO)], expand=True)
+            ], expand=True),
+            padding=20
+        )
+
+        # --- ABA GASTOS ---
+        dd_categoria = ft.Dropdown(label="Categoria", options=[
+            ft.dropdown.Option("Água"), ft.dropdown.Option("Energia"), ft.dropdown.Option("IPTU"),
+            ft.dropdown.Option("Entrega"), ft.dropdown.Option("Aluguel"), ft.dropdown.Option("Outros")
+        ], width=250)
+        txt_gasto_desc = ft.TextField(label="Descrição", width=250)
+        txt_gasto_valor = ft.TextField(label="Valor (R$)", width=250)
+        tabela_gastos = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("ID")),
+                ft.DataColumn(ft.Text("Categoria")),
+                ft.DataColumn(ft.Text("Descrição")),
+                ft.DataColumn(ft.Text("Valor")),
+                ft.DataColumn(ft.Text("Ação")),
+            ],
+            rows=[]
+        )
+
+        def atualizar_gastos():
+            tabela_gastos.rows.clear()
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM gastos WHERE usuario_id = ?", (user_session["id"],))
+            gastos = cursor.fetchall()
+            conn.close()
+
+            for g in gastos:
+                def excluir_g(e, gid=g["id"]):
+                    conn = get_db()
+                    conn.cursor().execute("DELETE FROM gastos WHERE id = ? AND usuario_id = ?", (gid, user_session["id"]))
+                    conn.commit()
+                    conn.close()
+                    atualizar_gastos()
+                    atualizar_relatorio()
+
+                tabela_gastos.rows.append(
+                    ft.DataRow(cells=[
+                        ft.DataCell(ft.Text(str(g["id"]))),
+                        ft.DataCell(ft.Text(g["categoria"])),
+                        ft.DataCell(ft.Text(g["descricao"])),
+                        ft.DataCell(ft.Text(f"R$ {g['valor']:.2f}")),
+                        ft.DataCell(ft.IconButton(icon=ft.Icons.DELETE, icon_color=ft.Colors.RED, on_click=excluir_g, tooltip="Excluir Gasto")),
+                    ])
+                )
+            page.update()
+
+        def salvar_gasto(e):
+            try:
+                cat = dd_categoria.value
+                desc = txt_gasto_desc.value
+                valor = float(txt_gasto_valor.value.replace(",", "."))
+                data_atual = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+                if not cat or not desc:
+                    mostrar_alerta("Preencha todos os campos do gasto.")
+                    return
+
+                conn = get_db()
+                conn.cursor().execute("INSERT INTO gastos (usuario_id, categoria, descricao, valor, data) VALUES (?, ?, ?, ?, ?)",
+                                      (user_session["id"], cat, desc, valor, data_atual))
+                conn.commit()
+                conn.close()
+
+                txt_gasto_desc.value = ""
+                txt_gasto_valor.value = ""
+                dd_categoria.value = None
+                atualizar_gastos()
+                atualizar_relatorio()
+                mostrar_alerta("Gasto registrado!", ft.Colors.GREEN)
+            except ValueError:
+                mostrar_alerta("Valor de gasto inválido.")
+
+        tab_gastos_content = ft.Container(
+            ft.Row([
+                ft.Column([
+                    ft.Text("Registrar Gasto", weight=ft.FontWeight.BOLD),
+                    dd_categoria, txt_gasto_desc, txt_gasto_valor,
+                    ft.Button("Salvar Gasto", on_click=salvar_gasto, bgcolor=ft.Colors.ORANGE, color=ft.Colors.WHITE)
+                ], width=300),
+                ft.VerticalDivider(),
+                ft.Column([ft.Text("Histórico de Gastos", weight=ft.FontWeight.BOLD), ft.Row([tabela_gastos], scroll=ft.ScrollMode.AUTO)], expand=True)
+            ], expand=True),
+            padding=20
+        )
+
+        # --- ABA RELATÓRIO ---
+        lbl_fat = ft.Text("R$ 0.00", size=16, weight=ft.FontWeight.BOLD)
+        lbl_lucro_b = ft.Text("R$ 0.00", size=16, weight=ft.FontWeight.BOLD)
+        lbl_gastos = ft.Text("R$ 0.00", size=16, weight=ft.FontWeight.BOLD)
+        lbl_lucro_l = ft.Text("R$ 0.00", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN)
+
+        def atualizar_relatorio():
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT SUM(preco_venda_total), SUM(lucro) FROM vendas WHERE usuario_id = ?", (user_session["id"],))
+            res_v = cursor.fetchone()
+            tot_v = res_v[0] if res_v and res_v[0] else 0.0
+            luc_b = res_v[1] if res_v and res_v[1] else 0.0
+
+            cursor.execute("SELECT SUM(valor) FROM gastos WHERE usuario_id = ?", (user_session["id"],))
+            res_g = cursor.fetchone()
+            tot_g = res_g[0] if res_g and res_g[0] else 0.0
+            conn.close()
+
+            luc_l = luc_b - tot_g
+
+            lbl_fat.value = f"R$ {tot_v:.2f}"
+            lbl_lucro_b.value = f"R$ {luc_b:.2f}"
+            lbl_gastos.value = f"R$ {tot_g:.2f}"
+            lbl_lucro_l.value = f"R$ {luc_l:.2f}"
+            page.update()
+
+        tab_relatorio_content = ft.Container(
+            ft.Column([
+                ft.Text("Resumo Financeiro", size=20, weight=ft.FontWeight.BOLD),
+                ft.Divider(),
+                ft.Row([ft.Text("💰 Faturamento Total com Vendas:"), lbl_fat]),
+                ft.Row([ft.Text("📈 Lucro Bruto:"), lbl_lucro_b]),
+                ft.Row([ft.Text("💸 Total de Gastos:"), lbl_gastos]),
+                ft.Divider(),
+                ft.Row([ft.Text("💎 LUCRO LÍQUIDO:", size=16, weight=ft.FontWeight.BOLD), lbl_lucro_l]),
+            ], alignment=ft.MainAxisAlignment.START, spacing=15),
+            padding=20
+        )
+
+        # --- MENU DE NAVEGAÇÃO PERSONALIZADO ---
+        conteudo_aba = ft.Column([tab_estoque_content], expand=True)
+
+        btn_estoque = ft.Button("📦 Estoque", bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)
+        btn_vendas = ft.Button("💰 Vendas", bgcolor=ft.Colors.GREY_300, color=ft.Colors.BLACK)
+        btn_gastos = ft.Button("💸 Gastos", bgcolor=ft.Colors.GREY_300, color=ft.Colors.BLACK)
+        btn_relatorio = ft.Button("📊 Relatório", bgcolor=ft.Colors.GREY_300, color=ft.Colors.BLACK)
+
+        def mudar_aba(e, aba_selecionada):
+            btn_estoque.bgcolor = ft.Colors.GREY_300
+            btn_estoque.color = ft.Colors.BLACK
+            btn_vendas.bgcolor = ft.Colors.GREY_300
+            btn_vendas.color = ft.Colors.BLACK
+            btn_gastos.bgcolor = ft.Colors.GREY_300
+            btn_gastos.color = ft.Colors.BLACK
+            btn_relatorio.bgcolor = ft.Colors.GREY_300
+            btn_relatorio.color = ft.Colors.BLACK
+
+            conteudo_aba.controls.clear()
+
+            if aba_selecionada == "estoque":
+                btn_estoque.bgcolor = ft.Colors.BLUE_700
+                btn_estoque.color = ft.Colors.WHITE
+                conteudo_aba.controls.append(tab_estoque_content)
+            elif aba_selecionada == "vendas":
+                btn_vendas.bgcolor = ft.Colors.BLUE_700
+                btn_vendas.color = ft.Colors.WHITE
+                conteudo_aba.controls.append(tab_vendas_content)
+            elif aba_selecionada == "gastos":
+                btn_gastos.bgcolor = ft.Colors.BLUE_700
+                btn_gastos.color = ft.Colors.WHITE
+                conteudo_aba.controls.append(tab_gastos_content)
+            elif aba_selecionada == "relatorio":
+                btn_relatorio.bgcolor = ft.Colors.BLUE_700
+                btn_relatorio.color = ft.Colors.WHITE
+                conteudo_aba.controls.append(tab_relatorio_content)
+            page.update()
+
+        btn_estoque.on_click = lambda e: mudar_aba(e, "estoque")
+        btn_vendas.on_click = lambda e: mudar_aba(e, "vendas")
+        btn_gastos.on_click = lambda e: mudar_aba(e, "gastos")
+        btn_relatorio.on_click = lambda e: mudar_aba(e, "relatorio")
+
+        menu_abas = ft.Row([btn_estoque, btn_vendas, btn_gastos, btn_relatorio], alignment=ft.MainAxisAlignment.START, spacing=10)
+
+        def sair(e):
+            user_session["id"] = None
+            user_session["username"] = ""
+            tela_login()
+
+        page.add(
+            ft.Row([
+                ft.Row([
+                    ft.Image(src="logo.png", width=35, height=35, error_content=ft.Text("LOGO")),
+                    ft.Text(f"👤 Usuário: {user_session['username']}", weight=ft.FontWeight.BOLD),
+                ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Button("Sair", on_click=sair, color=ft.Colors.RED)
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            menu_abas,
+            ft.Divider(height=10),
+            conteudo_aba
+        )
         
-        self.preencher_linhas_vazias(self.tree_estoque, 13)
+        atualizar_estoque()
+        atualizar_vendas()
+        atualizar_gastos()
+        atualizar_relatorio()
 
-    # --- ABA 2: VENDAS ---
-    def construir_aba_vendas(self):
-        frame_esq = ctk.CTkFrame(self.tab_vendas, width=320)
-        frame_esq.pack(side="left", fill="y", padx=10, pady=10)
-
-        ctk.CTkLabel(frame_esq, text="Realizar Venda", font=FONTE_TITULO).pack(pady=15)
-
-        ctk.CTkLabel(frame_esq, text="Selecione o Produto:", font=FONTE_PADRAO).pack(anchor="w", padx=15)
-        self.combo_produtos = ctk.CTkComboBox(frame_esq, values=[], font=FONTE_PADRAO, height=40)
-        self.combo_produtos.pack(pady=8, padx=15, fill="x")
-
-        self.ent_qtd_venda = ctk.CTkEntry(frame_esq, placeholder_text="Quantidade Vendida", font=FONTE_PADRAO, height=40)
-        self.ent_qtd_venda.pack(pady=8, padx=15, fill="x")
-
-        btn_vender = ctk.CTkButton(frame_esq, text="Concluir Venda", font=FONTE_BOTAO, fg_color="#2980b9", height=45, command=self.realizar_venda)
-        btn_vender.pack(pady=15, padx=15, fill="x")
-
-        btn_excluir_venda = ctk.CTkButton(frame_esq, text="Excluir Venda Selecionada", font=FONTE_BOTAO, fg_color="#c0392b", hover_color="#a93226", height=45, command=self.excluir_venda)
-        btn_excluir_venda.pack(pady=5, padx=15, fill="x")
-
-        frame_tabela_vendas = ctk.CTkFrame(self.tab_vendas)
-        frame_tabela_vendas.pack(side="right", fill="both", expand=True, padx=10, pady=10)
-
-        self.tree_vendas = ttk.Treeview(frame_tabela_vendas, columns=("ID", "Produto", "Qtd", "Custo Total", "Venda Total", "Lucro", "Data"), show="headings")
+    def tela_login():
+        page.clean()
         
-        self.tree_vendas.heading("ID", text="ID")
-        self.tree_vendas.heading("Produto", text="Produto")
-        self.tree_vendas.heading("Qtd", text="Qtd")
-        self.tree_vendas.heading("Custo Total", text="Custo Total")
-        self.tree_vendas.heading("Venda Total", text="Venda Total")
-        self.tree_vendas.heading("Lucro", text="Lucro")
-        self.tree_vendas.heading("Data", text="Data/Hora")
+        txt_user = ft.TextField(label="Usuário", width=300)
+        txt_senha = ft.TextField(label="Senha", password=True, can_reveal_password=True, width=300)
 
-        self.tree_vendas.column("ID", width=50, anchor="center")
-        self.tree_vendas.column("Produto", width=160, anchor="w")
-        self.tree_vendas.column("Qtd", width=50, anchor="center")
-        self.tree_vendas.column("Custo Total", width=100, anchor="e")
-        self.tree_vendas.column("Venda Total", width=100, anchor="e")
-        self.tree_vendas.column("Lucro", width=100, anchor="e")
-        self.tree_vendas.column("Data", width=130, anchor="center")
-
-        scrollbar_vendas = ttk.Scrollbar(frame_tabela_vendas, orient="vertical", command=self.tree_vendas.yview)
-        self.tree_vendas.configure(yscrollcommand=scrollbar_vendas.set)
-
-        self.tree_vendas.pack(side="left", fill="both", expand=True)
-        scrollbar_vendas.pack(side="right", fill="y")
-
-        self.atualizar_combobox_vendas()
-        self.atualizar_tabela_vendas()
-
-    def atualizar_combobox_vendas(self):
-        db.cursor.execute("SELECT id, nome FROM produtos WHERE usuario_id = ? AND quantidade > 0", (self.usuario_id,))
-        produtos = db.cursor.fetchall()
-        self.produtos_dict = {f"{p[1]} (ID: {p[0]})": p[0] for p in produtos}
-        self.combo_produtos.configure(values=list(self.produtos_dict.keys()))
-
-    def realizar_venda(self):
-        try:
-            selecionado = self.combo_produtos.get()
-            if not selecionado:
-                messagebox.showwarning("Aviso", "Selecione um produto.")
+        def fazer_login(e):
+            if not txt_user.value or not txt_senha.value:
+                mostrar_alerta("Preencha todos os campos!")
                 return
             
-            produto_id = self.produtos_dict[selecionado]
-            qtd_vendida = int(self.ent_qtd_venda.get())
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, username FROM usuarios WHERE username = ? AND senha = ?", (txt_user.value, txt_senha.value))
+            res = cursor.fetchone()
+            conn.close()
 
-            db.cursor.execute("SELECT quantidade, preco_custo, preco_venda FROM produtos WHERE id = ?", (produto_id,))
-            qtd_estoque, custo_unit, venda_unit = db.cursor.fetchone()
+            if res:
+                user_session["id"] = res["id"]
+                user_session["username"] = res["username"]
+                carregar_dashboard()
+            else:
+                mostrar_alerta("Usuário ou senha incorretos!")
 
-            if qtd_vendida > qtd_estoque:
-                messagebox.showerror("Erro", "Quantidade solicitada maior do que o estoque disponível!")
+        def fazer_cadastro(e):
+            if not txt_user.value or not txt_senha.value:
+                mostrar_alerta("Preencha usuário e senha para cadastrar!")
                 return
+            try:
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO usuarios (username, senha) VALUES (?, ?)", (txt_user.value, txt_senha.value))
+                conn.commit()
+                conn.close()
+                mostrar_alerta("Usuário cadastrado com sucesso! Faça login.", ft.Colors.GREEN)
+                txt_user.value = ""
+                txt_senha.value = ""
+                page.update()
+            except sqlite3.IntegrityError:
+                mostrar_alerta("Este nome de usuário já existe. Escolha outro.")
 
-            custo_total = custo_unit * qtd_vendida
-            venda_total = venda_unit * qtd_vendida
-            lucro = venda_total - custo_total
-            data_atual = datetime.now().strftime("%Y-%m-%d %H:%M")
+        page.add(
+            ft.Column([
+                ft.Image(src="logo.png", width=80, height=80, error_content=ft.Text("🛒", size=40)),
+                ft.Text("GESTOR COMERCIAL", size=24, weight=ft.FontWeight.BOLD),
+                ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
+                txt_user,
+                txt_senha,
+                ft.Row([
+                    ft.Button("Entrar", on_click=fazer_login, width=140, color=ft.Colors.WHITE, bgcolor=ft.Colors.BLUE),
+                    ft.Button("Cadastrar", on_click=fazer_cadastro, width=140, color=ft.Colors.WHITE, bgcolor=ft.Colors.GREEN),
+                ], alignment=ft.MainAxisAlignment.CENTER)
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        )
+        page.update()
 
-            db.cursor.execute("""
-                INSERT INTO vendas (usuario_id, produto_id, quantidade_vendida, preco_custo_total, preco_venda_total, lucro, data)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (self.usuario_id, produto_id, qtd_vendida, custo_total, venda_total, lucro, data_atual))
-
-            nova_qtd = qtd_estoque - qtd_vendida
-            db.cursor.execute("UPDATE produtos SET quantidade = ? WHERE id = ?", (nova_qtd, produto_id))
-            db.conn.commit()
-
-            messagebox.showinfo("Sucesso", f"Venda realizada!\nLucro obtido: R$ {lucro:.2f}")
-            self.atualizar_tabela_vendas()
-            self.atualizar_tabela_estoque()
-            self.atualizar_combobox_vendas()
-        except ValueError:
-            messagebox.showerror("Erro", "Digite uma quantidade válida.")
-
-    def excluir_venda(self):
-        try:
-            selecionado = self.tree_vendas.selection()
-            if not selecionado:
-                messagebox.showwarning("Aviso", "Selecione uma venda na tabela para excluir.")
-                return
-            
-            item = self.tree_vendas.item(selecionado)
-            venda_id = item['values'][0]
-
-            if not venda_id or venda_id == "":
-                return
-
-            db.cursor.execute("SELECT produto_id, quantidade_vendida FROM vendas WHERE id = ?", (venda_id,))
-            resultado = db.cursor.fetchone()
-            if not resultado:
-                return
-            prod_id, qtd_vendida = resultado
-
-            db.cursor.execute("UPDATE produtos SET quantidade = quantidade + ? WHERE id = ?", (qtd_vendida, prod_id))
-            db.cursor.execute("DELETE FROM vendas WHERE id = ?", (venda_id,))
-            db.conn.commit()
-
-            messagebox.showinfo("Sucesso", "Venda excluída e itens retornados ao estoque.")
-            self.atualizar_tabela_vendas()
-            self.atualizar_tabela_estoque()
-            self.atualizar_combobox_vendas()
-        except Exception as e:
-            messagebox.showerror("Erro", f"Não foi possível excluir: {e}")
-
-    def atualizar_tabela_vendas(self):
-        for row in self.tree_vendas.get_children():
-            self.tree_vendas.delete(row)
-        
-        query = """
-            SELECT v.id, p.nome, v.quantidade_vendida, v.preco_custo_total, v.preco_venda_total, v.lucro, v.data
-            FROM vendas v JOIN produtos p ON v.produto_id = p.id
-            WHERE v.usuario_id = ?
-        """
-        db.cursor.execute(query, (self.usuario_id,))
-        for row in db.cursor.fetchall():
-            row_fmt = list(row)
-            row_fmt[3] = f"R$ {row_fmt[3]:.2f}"
-            row_fmt[4] = f"R$ {row_fmt[4]:.2f}"
-            row_fmt[5] = f"R$ {row_fmt[5]:.2f}"
-            self.tree_vendas.insert("", "end", values=row_fmt)
-        
-        self.preencher_linhas_vazias(self.tree_vendas, 13)
-
-    # --- ABA 3: GASTOS E DESPESAS ---
-    def construir_aba_gastos(self):
-        frame_esq = ctk.CTkFrame(self.tab_gastos, width=320)
-        frame_esq.pack(side="left", fill="y", padx=10, pady=10)
-
-        ctk.CTkLabel(frame_esq, text="Registrar Gasto", font=FONTE_TITULO).pack(pady=15)
-
-        self.combo_cat = ctk.CTkComboBox(frame_esq, values=["Água", "Energia", "IPTU", "Entrega", "Aluguel", "Outros"], font=FONTE_PADRAO, height=40)
-        self.combo_cat.pack(pady=8, padx=15, fill="x")
-
-        self.ent_desc_gasto = ctk.CTkEntry(frame_esq, placeholder_text="Descrição (ex: Frete centro)", font=FONTE_PADRAO, height=40)
-        self.ent_desc_gasto.pack(pady=8, padx=15, fill="x")
-
-        self.ent_valor_gasto = ctk.CTkEntry(frame_esq, placeholder_text="Valor (R$)", font=FONTE_PADRAO, height=40)
-        self.ent_valor_gasto.pack(pady=8, padx=15, fill="x")
-
-        btn_gasto = ctk.CTkButton(frame_esq, text="Salvar Gasto", font=FONTE_BOTAO, fg_color="#e67e22", hover_color="#d35400", height=45, command=self.salvar_gasto)
-        btn_gasto.pack(pady=15, padx=15, fill="x")
-
-        btn_excluir_gasto = ctk.CTkButton(frame_esq, text="Excluir Gasto Selecionado", font=FONTE_BOTAO, fg_color="#c0392b", hover_color="#a93226", height=45, command=self.excluir_gasto)
-        btn_excluir_gasto.pack(pady=5, padx=15, fill="x")
-
-        frame_tabela_gastos = ctk.CTkFrame(self.tab_gastos)
-        frame_tabela_gastos.pack(side="right", fill="both", expand=True, padx=10, pady=10)
-
-        self.tree_gastos = ttk.Treeview(frame_tabela_gastos, columns=("ID", "Categoria", "Descrição", "Valor", "Data"), show="headings")
-        
-        self.tree_gastos.heading("ID", text="ID")
-        self.tree_gastos.heading("Categoria", text="Categoria")
-        self.tree_gastos.heading("Descrição", text="Descrição")
-        self.tree_gastos.heading("Valor", text="Valor")
-        self.tree_gastos.heading("Data", text="Data/Hora")
-
-        self.tree_gastos.column("ID", width=60, anchor="center")
-        self.tree_gastos.column("Categoria", width=140, anchor="w")
-        self.tree_gastos.column("Descrição", width=220, anchor="w")
-        self.tree_gastos.column("Valor", width=110, anchor="e")
-        self.tree_gastos.column("Data", width=130, anchor="center")
-
-        scrollbar_gastos = ttk.Scrollbar(frame_tabela_gastos, orient="vertical", command=self.tree_gastos.yview)
-        self.tree_gastos.configure(yscrollcommand=scrollbar_gastos.set)
-
-        self.tree_gastos.pack(side="left", fill="both", expand=True)
-        scrollbar_gastos.pack(side="right", fill="y")
-
-        self.atualizar_tabela_gastos()
-
-    def salvar_gasto(self):
-        try:
-            cat = self.combo_cat.get()
-            desc = self.ent_desc_gasto.get()
-            valor = float(self.ent_valor_gasto.get().replace(",", "."))
-            data_atual = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-            db.cursor.execute("INSERT INTO gastos (usuario_id, categoria, descricao, valor, data) VALUES (?, ?, ?, ?, ?)",
-                              (self.usuario_id, cat, desc, valor, data_atual))
-            db.conn.commit()
-
-            messagebox.showinfo("Sucesso", "Gasto registrado com sucesso!")
-            self.atualizar_tabela_gastos()
-        except ValueError:
-            messagebox.showerror("Erro", "Valor inválido.")
-
-    def excluir_gasto(self):
-        try:
-            selecionado = self.tree_gastos.selection()
-            if not selecionado:
-                messagebox.showwarning("Aviso", "Selecione um gasto na tabela para excluir.")
-                return
-            
-            item = self.tree_gastos.item(selecionado)
-            gasto_id = item['values'][0]
-
-            if not gasto_id or gasto_id == "":
-                return
-
-            db.cursor.execute("DELETE FROM gastos WHERE id = ?", (gasto_id,))
-            db.conn.commit()
-
-            messagebox.showinfo("Sucesso", "Gasto excluído com sucesso.")
-            self.atualizar_tabela_gastos()
-        except Exception as e:
-            messagebox.showerror("Erro", f"Não foi possível excluir o gasto: {e}")
-
-    def atualizar_tabela_gastos(self):
-        for row in self.tree_gastos.get_children():
-            self.tree_gastos.delete(row)
-        db.cursor.execute("SELECT id, categoria, descricao, valor, data FROM gastos WHERE usuario_id = ?", (self.usuario_id,))
-        for row in db.cursor.fetchall():
-            row_fmt = list(row)
-            row_fmt[3] = f"R$ {row_fmt[3]:.2f}"
-            self.tree_gastos.insert("", "end", values=row_fmt)
-        
-        self.preencher_linhas_vazias(self.tree_gastos, 13)
-
-    # --- ABA 4: RELATÓRIO FINANCEIRO ---
-    def construir_aba_relatorio(self):
-        frame_topo = ctk.CTkFrame(self.tab_relatorio)
-        frame_topo.pack(side="top", fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(frame_topo, text="Período do Relatório:", font=FONTE_PADRAO).pack(side="left", padx=10, pady=10)
-        
-        self.combo_periodo = ctk.CTkComboBox(frame_topo, values=["Últimos 30 Dias", "Últimos 20 Dias", "Últimos 7 Dias", "Todo o Período"], font=FONTE_PADRAO, height=35)
-        self.combo_periodo.pack(side="left", padx=10, pady=10)
-        self.combo_periodo.set("Últimos 30 Dias")
-
-        btn_gerar = ctk.CTkButton(frame_topo, text="Gerar Relatório", font=FONTE_BOTAO, height=35, command=self.gerar_relatorio)
-        btn_gerar.pack(side="left", padx=10, pady=10)
-
-        frame_tabela_rel = ctk.CTkFrame(self.tab_relatorio)
-        frame_tabela_rel.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.tree_relatorio = ttk.Treeview(frame_tabela_rel, columns=("Indicador", "Valor"), show="headings")
-        
-        self.tree_relatorio.heading("Indicador", text="Indicador / Descrição Financeira")
-        self.tree_relatorio.heading("Valor", text="Valor (R$)")
-
-        self.tree_relatorio.column("Indicador", width=600, anchor="w")
-        self.tree_relatorio.column("Valor", width=250, anchor="e")
-
-        scrollbar_rel = ttk.Scrollbar(frame_tabela_rel, orient="vertical", command=self.tree_relatorio.yview)
-        self.tree_relatorio.configure(yscrollcommand=scrollbar_rel.set)
-
-        self.tree_relatorio.pack(side="left", fill="both", expand=True)
-        scrollbar_rel.pack(side="right", fill="y")
-
-        self.gerar_relatorio()
-
-    def gerar_relatorio(self):
-        for row in self.tree_relatorio.get_children():
-            self.tree_relatorio.delete(row)
-
-        periodo = self.combo_periodo.get()
-        dias = 30
-        if "20" in periodo:
-            dias = 20
-        elif "7" in periodo:
-            dias = 7
-        elif "Todo" in periodo:
-            dias = 36500
-
-        data_limite = (datetime.now() - timedelta(days=dias)).strftime("%Y-%m-%d")
-
-        db.cursor.execute("""
-            SELECT SUM(preco_venda_total), SUM(lucro) FROM vendas 
-            WHERE usuario_id = ? AND data >= ?
-        """, (self.usuario_id, data_limite))
-        res_vendas = db.cursor.fetchone()
-        total_vendas = res_vendas[0] if res_vendas and res_vendas[0] else 0.0
-        lucro_bruto = res_vendas[1] if res_vendas and res_vendas[1] else 0.0
-
-        db.cursor.execute("""
-            SELECT SUM(valor) FROM gastos 
-            WHERE usuario_id = ? AND data >= ?
-        """, (self.usuario_id, data_limite))
-        res_gastos = db.cursor.fetchone()
-        total_gastos = res_gastos[0] if res_gastos[0] else 0.0
-
-        lucro_liquido = lucro_bruto - total_gastos
-
-        db.cursor.execute("""
-            SELECT categoria, SUM(valor) FROM gastos 
-            WHERE usuario_id = ? AND data >= ? GROUP BY categoria
-        """, (self.usuario_id, data_limite))
-        gastos_cat = db.cursor.fetchall()
-
-        self.tree_relatorio.insert("", "end", values=(f"=== RESUMO FINANCEIRO ({periodo}) ===", ""))
-        self.tree_relatorio.insert("", "end", values=("💰 Faturamento Total com Vendas", f"R$ {total_vendas:.2f}"))
-        self.tree_relatorio.insert("", "end", values=("📈 Lucro Bruto (Vendas - Custo dos Produtos)", f"R$ {lucro_bruto:.2f}"))
-        self.tree_relatorio.insert("", "end", values=("💸 Total de Gastos e Despesas", f"R$ {total_gastos:.2f}"))
-        self.tree_relatorio.insert("", "end", values=("--------------------------------------------------------------------------------", "---------------------"))
-        self.tree_relatorio.insert("", "end", values=("💎 LUCRO LÍQUIDO NO PERÍODO", f"R$ {lucro_liquido:.2f}"))
-        self.tree_relatorio.insert("", "end", values=("--------------------------------------------------------------------------------", "---------------------"))
-        self.tree_relatorio.insert("", "end", values=("📂 DETALHAMENTO DE GASTOS POR CATEGORIA", ""))
-        
-        if gastos_cat:
-            for cat, val in gastos_cat:
-                self.tree_relatorio.insert("", "end", values=(f"    • {cat}", f"R$ {val:.2f}"))
-        else:
-            self.tree_relatorio.insert("", "end", values=("    • Nenhum gasto registrado neste período.", "R$ 0.00"))
-
-        self.preencher_linhas_vazias(self.tree_relatorio, 13)
+    # Iniciar na tela de login
+    tela_login()
 
 if __name__ == "__main__":
-    app = GestorComercialApp()
-    app.mainloop()
+    ft.run(main, port=8080, host="0.0.0.0")
