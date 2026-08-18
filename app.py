@@ -520,8 +520,9 @@ def main(page: ft.Page):
     # Iniciar na tela de login
     tela_login()
 
+
 if __name__ == "__main__":
-    ft.run(main, port=8091, host="0.0.0.0")
+    ft.app(target=main, port=8091, host="0.0.0.0")
     
 
 
