@@ -521,4 +521,8 @@ def main(page: ft.Page):
     tela_login()
 
 if __name__ == "__main__":
-    ft.run(main, port=8080, host="0.0.0.0")
+    ft.run(main, port=8091, host="0.0.0.0")
+    
+
+
+
