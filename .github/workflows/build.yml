@@ -24,4 +24,4 @@ jobs:
 
       - name: Build Flet App
         run: |
-          flet pack main.py
+          flet pack app.py
