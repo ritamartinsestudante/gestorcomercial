@@ -2,6 +2,7 @@ from datetime import datetime
 import sqlite3
 import flet as ft
 
+
 # --- BANCO DE DADOS ---
 def get_db():
     conn = sqlite3.connect("gestor_comercial.db", check_same_thread=False)
