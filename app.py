@@ -2,60 +2,60 @@ from datetime import datetime
 import sqlite3
 import flet as ft
 
-
 # --- BANCO DE DADOS ---
+DB_NAME = "gestor_comercial.db"
+
 def get_db():
-    conn = sqlite3.connect("gestor_comercial.db", check_same_thread=False)
+    conn = sqlite3.connect(DB_NAME, timeout=10.0)
     conn.row_factory = sqlite3.Row
     return conn
 
 def criar_tabelas():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            senha TEXT NOT NULL
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS produtos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id INTEGER,
-            nome TEXT NOT NULL,
-            quantidade INTEGER NOT NULL,
-            preco_custo REAL NOT NULL,
-            preco_venda REAL NOT NULL,
-            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS vendas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id INTEGER,
-            produto_id INTEGER,
-            quantidade_vendida INTEGER,
-            preco_custo_total REAL,
-            preco_venda_total REAL,
-            lucro REAL,
-            data TEXT,
-            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS gastos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id INTEGER,
-            categoria TEXT,
-            descricao TEXT,
-            valor REAL,
-            data TEXT,
-            FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-        )
-    """)
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                senha TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS produtos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER,
+                nome TEXT NOT NULL,
+                quantidade INTEGER NOT NULL,
+                preco_custo REAL NOT NULL,
+                preco_venda REAL NOT NULL,
+                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS vendas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER,
+                produto_id INTEGER,
+                quantidade_vendida INTEGER,
+                preco_custo_total REAL,
+                preco_venda_total REAL,
+                lucro REAL,
+                data TEXT,
+                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gastos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER,
+                categoria TEXT,
+                descricao TEXT,
+                valor REAL,
+                data TEXT,
+                FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+            )
+        """)
+        conn.commit()
 
 criar_tabelas()
 
@@ -64,8 +64,8 @@ def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.window_width = 1100
-    page.window_height = 750
+    page.window.width = 1100
+    page.window.height = 750
 
     user_session = {"id": None, "username": ""}
 
@@ -97,18 +97,16 @@ def main(page: ft.Page):
 
         def atualizar_estoque():
             tabela_produtos.rows.clear()
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM produtos WHERE usuario_id = ?", (user_session["id"],))
-            produtos = cursor.fetchall()
-            conn.close()
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM produtos WHERE usuario_id = ?", (user_session["id"],))
+                produtos = cursor.fetchall()
 
             for p in produtos:
                 def excluir_p(e, pid=p["id"]):
-                    conn = get_db()
-                    conn.cursor().execute("DELETE FROM produtos WHERE id = ? AND usuario_id = ?", (pid, user_session["id"]))
-                    conn.commit()
-                    conn.close()
+                    with get_db() as conn:
+                        conn.cursor().execute("DELETE FROM produtos WHERE id = ? AND usuario_id = ?", (pid, user_session["id"]))
+                        conn.commit()
                     atualizar_estoque()
                     atualizar_vendas()
 
@@ -131,11 +129,10 @@ def main(page: ft.Page):
                 custo = float(txt_prod_custo.value.replace(",", "."))
                 venda = float(txt_prod_venda.value.replace(",", "."))
 
-                conn = get_db()
-                conn.cursor().execute("INSERT INTO produtos (usuario_id, nome, quantidade, preco_custo, preco_venda) VALUES (?, ?, ?, ?, ?)",
-                                      (user_session["id"], nome, qtd, custo, venda))
-                conn.commit()
-                conn.close()
+                with get_db() as conn:
+                    conn.cursor().execute("INSERT INTO produtos (usuario_id, nome, quantidade, preco_custo, preco_venda) VALUES (?, ?, ?, ?, ?)",
+                                          (user_session["id"], nome, qtd, custo, venda))
+                    conn.commit()
 
                 txt_prod_nome.value = ""
                 txt_prod_qtd.value = ""
@@ -177,31 +174,29 @@ def main(page: ft.Page):
 
         def atualizar_vendas():
             dd_produtos.options.clear()
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM produtos WHERE usuario_id = ? AND quantidade > 0", (user_session["id"],))
-            for p in cursor.fetchall():
-                dd_produtos.options.append(ft.dropdown.Option(key=str(p["id"]), text=f"{p['nome']} (Estoque: {p['quantidade']})"))
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM produtos WHERE usuario_id = ? AND quantidade > 0", (user_session["id"],))
+                for p in cursor.fetchall():
+                    dd_produtos.options.append(ft.dropdown.Option(key=str(p["id"]), text=f"{p['nome']} (Estoque: {p['quantidade']})"))
 
-            tabela_vendas.rows.clear()
-            cursor.execute("""
-                SELECT v.*, p.nome as nome_produto FROM vendas v 
-                JOIN produtos p ON v.produto_id = p.id WHERE v.usuario_id = ?
-            """, (user_session["id"],))
-            vendas = cursor.fetchall()
-            conn.close()
+                tabela_vendas.rows.clear()
+                cursor.execute("""
+                    SELECT v.*, p.nome as nome_produto FROM vendas v 
+                    JOIN produtos p ON v.produto_id = p.id WHERE v.usuario_id = ?
+                """, (user_session["id"],))
+                vendas = cursor.fetchall()
 
             for v in vendas:
                 def excluir_v(e, vid=v["id"]):
-                    conn = get_db()
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT produto_id, quantidade_vendida FROM vendas WHERE id = ? AND usuario_id = ?", (vid, user_session["id"]))
-                    vend = cursor.fetchone()
-                    if vend:
-                        cursor.execute("UPDATE produtos SET quantidade = quantidade + ? WHERE id = ?", (vend["quantidade_vendida"], vend["produto_id"]))
-                        cursor.execute("DELETE FROM vendas WHERE id = ?", (vid,))
-                        conn.commit()
-                    conn.close()
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT produto_id, quantidade_vendida FROM vendas WHERE id = ? AND usuario_id = ?", (vid, user_session["id"]))
+                        vend = cursor.fetchone()
+                        if vend:
+                            cursor.execute("UPDATE produtos SET quantidade = quantidade + ? WHERE id = ?", (vend["quantidade_vendida"], vend["produto_id"]))
+                            cursor.execute("DELETE FROM vendas WHERE id = ?", (vid,))
+                            conn.commit()
                     atualizar_estoque()
                     atualizar_vendas()
                     atualizar_relatorio()
@@ -226,26 +221,24 @@ def main(page: ft.Page):
                 prod_id = int(dd_produtos.value)
                 qtd_v = int(txt_venda_qtd.value)
 
-                conn = get_db()
-                cursor = conn.cursor()
-                cursor.execute("SELECT quantidade, preco_custo, preco_venda FROM produtos WHERE id = ? AND usuario_id = ?", (prod_id, user_session["id"]))
-                p = cursor.fetchone()
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT quantidade, preco_custo, preco_venda FROM produtos WHERE id = ? AND usuario_id = ?", (prod_id, user_session["id"]))
+                    p = cursor.fetchone()
 
-                if not p or p["quantidade"] < qtd_v:
-                    mostrar_alerta("Estoque insuficiente!")
-                    conn.close()
-                    return
+                    if not p or p["quantidade"] < qtd_v:
+                        mostrar_alerta("Estoque insuficiente!")
+                        return
 
-                custo_total = p["preco_custo"] * qtd_v
-                venda_total = p["preco_venda"] * qtd_v
-                lucro = venda_total - custo_total
-                data_atual = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    custo_total = p["preco_custo"] * qtd_v
+                    venda_total = p["preco_venda"] * qtd_v
+                    lucro = venda_total - custo_total
+                    data_atual = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-                cursor.execute("INSERT INTO vendas (usuario_id, produto_id, quantidade_vendida, preco_custo_total, preco_venda_total, lucro, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                               (user_session["id"], prod_id, qtd_v, custo_total, venda_total, lucro, data_atual))
-                cursor.execute("UPDATE produtos SET quantidade = quantidade - ? WHERE id = ?", (qtd_v, prod_id))
-                conn.commit()
-                conn.close()
+                    cursor.execute("INSERT INTO vendas (usuario_id, produto_id, quantidade_vendida, preco_custo_total, preco_venda_total, lucro, data) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                   (user_session["id"], prod_id, qtd_v, custo_total, venda_total, lucro, data_atual))
+                    cursor.execute("UPDATE produtos SET quantidade = quantidade - ? WHERE id = ?", (qtd_v, prod_id))
+                    conn.commit()
 
                 txt_venda_qtd.value = ""
                 dd_produtos.value = None
@@ -289,18 +282,16 @@ def main(page: ft.Page):
 
         def atualizar_gastos():
             tabela_gastos.rows.clear()
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM gastos WHERE usuario_id = ?", (user_session["id"],))
-            gastos = cursor.fetchall()
-            conn.close()
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM gastos WHERE usuario_id = ?", (user_session["id"],))
+                gastos = cursor.fetchall()
 
             for g in gastos:
                 def excluir_g(e, gid=g["id"]):
-                    conn = get_db()
-                    conn.cursor().execute("DELETE FROM gastos WHERE id = ? AND usuario_id = ?", (gid, user_session["id"]))
-                    conn.commit()
-                    conn.close()
+                    with get_db() as conn:
+                        conn.cursor().execute("DELETE FROM gastos WHERE id = ? AND usuario_id = ?", (gid, user_session["id"]))
+                        conn.commit()
                     atualizar_gastos()
                     atualizar_relatorio()
 
@@ -326,11 +317,10 @@ def main(page: ft.Page):
                     mostrar_alerta("Preencha todos os campos do gasto.")
                     return
 
-                conn = get_db()
-                conn.cursor().execute("INSERT INTO gastos (usuario_id, categoria, descricao, valor, data) VALUES (?, ?, ?, ?, ?)",
-                                      (user_session["id"], cat, desc, valor, data_atual))
-                conn.commit()
-                conn.close()
+                with get_db() as conn:
+                    conn.cursor().execute("INSERT INTO gastos (usuario_id, categoria, descricao, valor, data) VALUES (?, ?, ?, ?, ?)",
+                                          (user_session["id"], cat, desc, valor, data_atual))
+                    conn.commit()
 
                 txt_gasto_desc.value = ""
                 txt_gasto_valor.value = ""
@@ -361,17 +351,16 @@ def main(page: ft.Page):
         lbl_lucro_l = ft.Text("R$ 0.00", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN)
 
         def atualizar_relatorio():
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT SUM(preco_venda_total), SUM(lucro) FROM vendas WHERE usuario_id = ?", (user_session["id"],))
-            res_v = cursor.fetchone()
-            tot_v = res_v[0] if res_v and res_v[0] else 0.0
-            luc_b = res_v[1] if res_v and res_v[1] else 0.0
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT SUM(preco_venda_total), SUM(lucro) FROM vendas WHERE usuario_id = ?", (user_session["id"],))
+                res_v = cursor.fetchone()
+                tot_v = res_v[0] if res_v and res_v[0] else 0.0
+                luc_b = res_v[1] if res_v and res_v[1] else 0.0
 
-            cursor.execute("SELECT SUM(valor) FROM gastos WHERE usuario_id = ?", (user_session["id"],))
-            res_g = cursor.fetchone()
-            tot_g = res_g[0] if res_g and res_g[0] else 0.0
-            conn.close()
+                cursor.execute("SELECT SUM(valor) FROM gastos WHERE usuario_id = ?", (user_session["id"],))
+                res_g = cursor.fetchone()
+                tot_g = res_g[0] if res_g and res_g[0] else 0.0
 
             luc_l = luc_b - tot_g
 
@@ -394,7 +383,7 @@ def main(page: ft.Page):
             padding=20
         )
 
-        # --- MENU DE NAVEGAÇÃO PERSONALIZADO ---
+        # --- MENU DE NAVEGAÇÃO ---
         conteudo_aba = ft.Column([tab_estoque_content], expand=True)
 
         btn_estoque = ft.Button("📦 Estoque", bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)
@@ -473,11 +462,10 @@ def main(page: ft.Page):
                 mostrar_alerta("Preencha todos os campos!")
                 return
             
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, username FROM usuarios WHERE username = ? AND senha = ?", (txt_user.value, txt_senha.value))
-            res = cursor.fetchone()
-            conn.close()
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, username FROM usuarios WHERE username = ? AND senha = ?", (txt_user.value, txt_senha.value))
+                res = cursor.fetchone()
 
             if res:
                 user_session["id"] = res["id"]
@@ -491,11 +479,10 @@ def main(page: ft.Page):
                 mostrar_alerta("Preencha usuário e senha para cadastrar!")
                 return
             try:
-                conn = get_db()
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO usuarios (username, senha) VALUES (?, ?)", (txt_user.value, txt_senha.value))
-                conn.commit()
-                conn.close()
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO usuarios (username, senha) VALUES (?, ?)", (txt_user.value, txt_senha.value))
+                    conn.commit()
                 mostrar_alerta("Usuário cadastrado com sucesso! Faça login.", ft.Colors.GREEN)
                 txt_user.value = ""
                 txt_senha.value = ""
@@ -518,12 +505,7 @@ def main(page: ft.Page):
         )
         page.update()
 
-    # Iniciar na tela de login
     tela_login()
 
-
-
-
 if __name__ == "__main__":
-    ft.app(target=main)
-
+    ft.app( target=main,)
