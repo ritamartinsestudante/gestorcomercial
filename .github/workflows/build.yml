@@ -23,10 +23,11 @@ jobs:
           pip install flet
 
       - name: Build Flet App
-        run: flet build apk
+        run: flet build apk --yes
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-apk
           path: build/sapk/app-release.apk
+
