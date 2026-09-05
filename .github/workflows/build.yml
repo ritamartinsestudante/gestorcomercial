@@ -34,4 +34,3 @@ jobs:
             dist/*.apk
             *.apk
 
-
