@@ -1,3 +1,4 @@
+
 name: Build Flet APK
 
 on:
@@ -12,10 +13,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build APK
-        uses: flet-dev/flet-build-action@v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          target: apk
-          runner-python-version: "3.12"
-          bundled-python-version: "3.12"
-          build-number: ${{ github.run_number }}
+          python-version: "3.12"
+
+      - name: Install Flet
+        run: pip install flet
+
+      - name: Build APK with Flet
+        run: flet build apk --project-name "RitaGestor"
