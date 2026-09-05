@@ -1,0 +1,9 @@
+[project]
+name = "gestorcomercial"
+version = "0.1.0"
+dependencies = [
+    "flet",
+]
+
+[tool.flet]
+app-path = "main.py"
