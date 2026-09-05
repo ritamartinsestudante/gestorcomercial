@@ -20,6 +20,6 @@ jobs:
 
       - name: Install Flet
         run: pip install flet
-
+        
       - name: Build APK with Flet
-        run: flet build apk --project-name "RitaGestor"
+        run: flet build apk
