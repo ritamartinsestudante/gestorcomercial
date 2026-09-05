@@ -23,7 +23,7 @@ jobs:
           pip install flet
 
       - name: Build Flet App
-        run: flet build apk --yes --module-name app.py --include app.py
+        run: flet build apk --yes --module-name app.py
 
       - name: Find and Upload APK
         uses: actions/upload-artifact@v4
@@ -33,5 +33,4 @@ jobs:
             build/**/*.apk
             dist/*.apk
             *.apk
-
 
